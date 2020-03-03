@@ -3,6 +3,9 @@ Input data and analysis scripts for a blog post of Czexpats in Science about res
 
 ### Authors
 
-Michal H. Kolář
+Michal H. Kolář, University of Chemistry and Technology, Czexpats in Science
 
-Radimm Hladík
+Radimm Hladík, Instituce of Philosophy of the Czech Academy of Sciences, Czech Association for Digital Humanities
+
+### Full text (in Czech)
+<a href="http://czexpatsinscience.cz/blog-post/gacr_2020/">http://czexpatsinscience.cz/blog-post/gacr_2020/</a>
