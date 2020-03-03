@@ -1,0 +1,649 @@
+---
+title: "Blog Czexpats - GAČR 2019"
+author: "Radim Hladik"
+output:
+  html_document: 
+      self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+library(tidyverse)
+library(plotly)
+options(OutDec= ",")
+
+```
+
+## Overview
+
+```{r echo=FALSE, message=FALSE}
+
+hit <- readr::read_csv(here::here("DATA", "approved.csv"))
+
+miss <- readr::read_csv(here::here("DATA", "rejected.csv"))
+
+gacr <- bind_rows(list("hit" = hit, "miss" = miss), .id = "status") %>% 
+    janitor::clean_names() %>% 
+    unite(instituce, uchazec, fakulta, remove = FALSE) %>% 
+    mutate(dotace = as.double(dotace),
+           zpusobile = as.double(zpusobile),
+           instituce = str_remove(instituce, "_NA$"),
+           instituce = str_replace(instituce, "_", ", "),
+           status = case_when(status == "hit" ~ TRUE,
+                                 status == "miss" ~ FALSE
+           )
+           ) 
+
+
+DT::datatable(gacr %>% select(-abstrakt)) 
+```
+
+# Korelace počet podaných/počet úspěšných
+
+```{r echo=FALSE}
+data <- gacr %>% 
+    select(soutez, status, instituce) %>% 
+    filter(str_detect(soutez, "Standa")) %>% 
+    group_by(instituce) %>%
+    mutate(uspech = sum(status)) %>% 
+    mutate(n = n()) %>% 
+    ungroup() %>% 
+    select(instituce, uspech, n) %>% 
+    distinct() %>% 
+    filter(n > 5) 
+
+x <- data %>% pull(n)
+y <- data %>% pull(uspech)
+
+cor.test(x,y, method = "spearman")
+
+```
+
+
+## Přehled úspěšnosti dle soutěže a komise
+
+```{r include=FALSE}
+
+competitions_gg_data <- gacr %>%
+    select(soutez, status) %>%
+    group_by(soutez, status) %>%
+    count(name = "count") %>%
+    group_by(soutez) %>% 
+    mutate(percentage = round(count/sum(count), 2)) %>% 
+    mutate(N = sum(count)) %>% 
+    mutate(status_char = ifelse(status == TRUE, "Schválené", "Zamítnuté")) %>% 
+    mutate(ypos = if_else(status == TRUE, 10, 90)) %>%
+    mutate(bar_position = min(percentage)) %>% 
+    ungroup() %>% 
+    mutate(soutez = str_replace(soutez, "[-–] 2020", ""),
+           soutez = fct_reorder(soutez, bar_position))
+
+(competitions_gg <- competitions_gg_data %>% 
+    ggplot(aes(soutez, 
+               percentage, 
+               fill = fct_rev(status_char),
+               text = paste(" Počet:", count, "\n",
+                            "Celkem:", N, "\n",
+                            "Podíl:", percentage, "\n",
+                            "Soutěž:", soutez),
+               labels = soutez)) +
+    geom_bar(stat = "identity", position = "fill") +
+    labs(x = "", y = "",
+         title = "Úspěšnost v soutěžích GAČR 2020") +
+    ggthemes::theme_gdocs() +
+    ggthemes::scale_fill_gdocs(name = NULL) +
+    scale_y_continuous(labels = scales::percent, 
+                       limits = c(0, 1),
+                       breaks = c(0, 0.25, 0.50, 0.75, 1),
+                       expand = expand_scale(mult = 0, add = c(0,0.05)),
+                       sec.axis = sec_axis(~  . * 2000)) +
+    scale_x_discrete(
+        labels = function(x) {str_wrap(x, width = 10)}
+    ) +
+    theme(plot.title = element_text("Helvetica", color = "black", 
+                                    hjust = 0.5),
+          axis.text = element_text("Helvetica", color = "black"),
+          legend.text = element_text("Helvetica", color = "black"),
+          legend.title = element_blank()) +
+   geom_bar(aes(soutez, count / 2000,
+                alpha = rev(status_char), 
+                fill = "black"),
+            stat = "identity",
+            width = 0.2) +
+    scale_alpha_discrete(range = c(1,0.5), guide = FALSE) +
+    scale_fill_manual(values = c("black", "#DC3912", "#3366CC"),
+                      labels = c("Count", "Zamítnuté", "Schválené"),
+                      guide = guide_legend()) 
+    # geom_text(aes(label = ifelse(status_char == "Approved", count, ""), y = 0.05), color = "white") +
+    # geom_text(aes(label = ifelse(status_char == "Rejected", count, ""), y = 0.90), color = "white") +
+    # geom_text(aes(soutez, 1.02, label = N), nudge_x = 0.2) 
+ )
+
+
+competitions_plotly <-
+    ggplotly(competitions_gg, tooltip = "text") %>%
+    add_bars(
+      x =  ~ soutez,
+      y =  ~ 200,
+      colors = list("black", "rgb(16,16,16)"),
+      yaxis = "y2",
+      data = competitions_gg_data,
+      showlegend = FALSE,
+      inherit = FALSE
+    ) %>%
+    layout(
+      yaxis2 = list(
+        overlaying = "y",
+        side = "right"
+      ),
+      legend = list(orientation = "v", y = 0, x = 1.1))
+
+
+competitions_plotly$x$data[[1]]$name <- "% Zamítnuté"
+competitions_plotly$x$data[[2]]$name <- "% Schválené"
+competitions_plotly$x$data[[3]]$name <- "# Zamítnuté"
+competitions_plotly$x$data[[4]]$name <- "# Schválené"
+
+competitions_plotly$x$layout$font$family[[1]] <- "Helvetica"
+competitions_plotly$x$layout$font$color[[1]] <- "rgb(0,0,0,1)"
+competitions_plotly[["x"]][["data"]][[3]][["marker"]][["color"]] <- "rgb(80,80,80)"
+competitions_plotly[["x"]][["data"]][[3]][["marker"]][["opacity"]] <- "0.7"
+competitions_plotly[["x"]][["data"]][[4]][["marker"]][["color"]] <- "rgb(0,0,0,1)"
+competitions_plotly[["x"]][["data"]][[4]][["marker"]][["opacity"]] <- "0.7"
+
+
+competitions_plotly
+
+htmlwidgets::saveWidget(competitions_plotly, 
+                        here::here("figures", "competitions.html"),
+                        selfcontained = TRUE)
+
+unlink(here::here("figures", "competitions_files"), recursive = TRUE)
+ 
+
+```
+
+```{r echo=FALSE}
+competitions_plotly
+```
+
+
+## Oborový přehled dotací
+
+```{r include=FALSE}
+
+
+money_gg_data <- gacr %>%
+    filter(str_detect(soutez, "Stand|Junior"),
+           status == TRUE) %>% 
+    select(soutez, status, dotace, komise) %>%
+    mutate(status_char = ifelse(status == TRUE, "Approved", "Rejected")) %>%
+    mutate(komise = case_when(str_detect(komise, "zem") ~ "Vědy zemědělské, biologicko- environmentální", 
+                              str_detect(komise, "spol") ~ "Vědy humanitní, společenské",
+                              str_detect(komise, "lék") ~ "Vědy lékařské, biologické",
+                              str_detect(komise, "přír") ~ "Vědy o neživé přírodě",
+                              str_detect(komise, "tech") ~ "Vědy technické")) %>% 
+    group_by(soutez) %>% 
+    mutate(tot_soutez = sum(dotace)) %>% # all money distributed per comp
+    group_by(soutez, komise) %>%
+    mutate(tot_disc = sum(dotace, na.rm = TRUE), # money per disc and comp
+           avg_disc = mean(dotace, na.rm = TRUE), # average money per disc and comp
+           pct_disc = tot_disc/tot_soutez, # pct of disc (in a comp)
+           n_disc = n()) %>% 
+    group_by(komise) %>% 
+    mutate(bar_position = max(tot_disc)) %>% 
+    ungroup() %>% 
+    mutate(komise = fct_reorder(komise, bar_position)) %>% 
+    mutate(dotace = dotace/1000,
+           tot_disc = tot_disc/1000,
+           avg_disc = avg_disc/1000) 
+    
+
+(money_gg <- 
+    money_gg_data %>% 
+    ggplot(aes(komise, 
+               tot_disc, 
+               color = soutez,
+               group = soutez,
+               text = paste(" Soutež:", soutez, "\n",
+                            "Komise:", komise, "\n",
+                            "Celková dotace:", round(tot_disc,2), "mil. Kč\n",
+                            "Počet udělených grantů:", n_disc, "\n",
+                            "Průměrná dotace na grant:", round(avg_disc,2), "mil. Kč\n"
+               ))) +
+    geom_point(aes(size = avg_disc, 
+                   color = soutez), #, alpha = n_disc
+               position = position_dodge(width = 0.6)) +
+    geom_linerange(aes(x = komise, ymin = 0, ymax = tot_disc, 
+                       colour = soutez),  #, alpha = n_disc
+                   position = position_dodge(width = 0.6),
+                   size = 5) +
+    scale_size_continuous(range = c(3, 10)) +
+    scale_y_continuous(limits = c(0,800)) +
+    scale_x_discrete(
+        labels = function(x) {str_wrap(x, width = 10)} # x axis labels
+    ) +
+    labs(x = "", y = "",
+         title = "Dotace udělené v hlavních soutěžích GAČR 2020",
+         subtitle = "(v mil. Kč)") +
+    scale_color_manual(values = c("#E67300", "#B82E2E")) +
+    ggthemes::theme_gdocs() +
+    theme(panel.grid.major.x = element_blank(),
+          plot.title = element_text("Helvetica", color = "black", 
+                                    hjust = 0.5),
+          plot.subtitle = element_text("Helvetica", color = "black", 
+                                    hjust = 0.5),
+          axis.text = element_text("Helvetica", color = "black"),
+          legend.text = element_text("Helvetica", color = "black"),
+          legend.title = element_blank()) 
+)
+    
+
+
+
+(money_plotly <-
+    ggplotly(money_gg, tooltip = "text") %>% 
+    layout(
+    legend = list(orientation = "h", x = 0.1, y = -0.4)))
+
+money_plotly[["x"]][["layout"]][["yaxis"]][["ticktext"]] <- paste(money_plotly[["x"]][["layout"]][["yaxis"]][["ticktext"]], "mil. Kč")
+
+money_plotly
+
+htmlwidgets::saveWidget(money_plotly, 
+                        here::here("figures", "money.html"),
+                        selfcontained = TRUE)
+
+unlink(here::here("figures", "money_files"), recursive = TRUE)
+
+
+```
+
+
+```{r echo=FALSE}
+money_plotly
+```
+
+### Oborová úspěšnost
+
+```{r}
+gacr %>% group_by(soutez, komise) %>% 
+  summarise(uspech = mean(status)*100) %>% 
+  arrange(soutez, komise) %>% 
+  DT::datatable()
+
+```
+
+
+### Počty žádostí
+
+```{r}
+gacr %>% group_by(soutez, komise) %>% 
+  summarise(zadosti = n()) %>% 
+  arrange(soutez, komise) %>% 
+  DT::datatable()
+```
+
+### Podíl na penězích
+
+```{r echo=FALSE}
+gacr %>% group_by(soutez) %>% 
+  filter(status == TRUE) %>% 
+  mutate(tot = sum(dotace)) %>% 
+  group_by(komise, soutez) %>% 
+  mutate(pct_money = (sum(dotace)/tot)*100) %>%
+  distinct(soutez, komise, pct_money) %>% 
+  arrange(soutez, komise) %>% 
+  DT::datatable()
+```
+
+### Průměrná dotace a délka trvání
+
+```{r echo=FALSE}
+gacr %>% 
+ filter(status == TRUE) %>% 
+ group_by(soutez) %>% 
+ summarise(mean(dotace), mean(trvani)) %>% 
+ DT::datatable()
+```
+
+## Analýza klíčových slov
+
+```{r include=FALSE}
+require(igraph)
+require(tidytext)
+require(widyr)
+require(ggraph)
+require(tidygraph)
+```
+
+### NLP
+```{r include=FALSE}
+
+# # text data processing goes here
+# 
+# require(udpipe)
+# 
+# model_file <- tempfile(pattern = "", fileext = ".udpipe")
+# 
+# download.file("https://lindat.mff.cuni.cz/repository/xmlui/bitstream/handle/11234/1-2998/czech-cac-ud-2.4-190531.udpipe?sequence=14&isAllowed=y", model_file, mode = "wb")
+# 
+# udmodel_czech <- udpipe::udpipe_load_model(file = model_file)
+# 
+# unlink(model_file)
+# 
+# get_lemma <- function(lemma_input) {
+# 
+# lemma_output <- udpipe_annotate(udmodel_czech, lemma_input)  %>%
+#     as_tibble() %>% 
+#     pull(lemma) %>% 
+#     paste(collapse = " ")
+# 
+# return(lemma_output)
+# 
+# }
+# 
+# gacr_text <- gacr %>% filter(str_detect(soutez, "Standa|Junior")) %>% 
+#   select(project = cislo_projektu, keywords = klicova_slova, nazev) %>%
+#   filter(!duplicated(nazev)) %>% 
+#   mutate(keywords = map_chr(keywords, get_lemma)) %>% 
+#   unite("keywords", c(nazev,keywords), sep = " ") %>% 
+#   mutate(keywords = trimws(tolower(keywords)),
+#          keywords = str_replace_all(keywords, "[^a-zA-Záčďéěíňóřšťůúýž0-9]", " ")) %>% 
+#   tidytext::unnest_tokens(word, keywords) %>% 
+#   filter(!word %in% tidystopwords::generate_stoplist(lang_name = "Czech")) %>% 
+#   group_by(project) %>% 
+#   count(word) 
+# 
+# write_tsv(gacr_text, here::here("DATA", "wc.tsv"))
+
+gacr_text <- read_tsv(here::here("DATA", "wc.tsv")) %>% 
+  mutate(word = str_replace_all(word,"dno", "dna")) %>% 
+  filter(!is.na(word))
+
+```
+
+### 100 MFW
+
+```{r include=FALSE}
+
+comparison <- gacr %>%
+    select(soutez, status, komise, cislo_projektu) %>%
+    left_join(gacr_text, by = c("cislo_projektu" = "project")) %>% 
+  group_by(status) %>% 
+  count(word) %>% 
+  mutate(share = (n/sum(n))*100) %>%
+  mutate(status_char = ifelse(status == TRUE, "Approved", "Rejected")) %>% 
+  arrange(word) %>% 
+  ungroup() %>% 
+  arrange(desc(n)) %>% 
+  select(-status, -n) %>% 
+  spread(status_char, share) %>% 
+  filter_all(all_vars(!is.na(.))) %>% 
+  left_join(gacr_text %>% 
+              count(word)) %>% 
+  top_n(100, n) 
+  
+
+
+(comparison_gg <- ggplot(comparison, 
+                         aes(Approved, Rejected,
+                         text = paste(word, "\n\n",
+                            "Počet výskytů:", n, "\n",       
+                            "Schválené:", round(Approved,2), "\n",
+                            "Zamítnuté:", round(Rejected,2), "\n"))
+                            ) +
+  geom_point(alpha = 0.7,
+             aes(size = n)
+             ) +
+  geom_text(aes(label = word), color = "gray", size = 2, 
+            check_overlap = TRUE,
+            position = position_jitter(),
+            vjust = 0.05) +
+  labs(x = "Schválené", y = "Zamítnuté",
+         title = "Relativní výskyt 100 nejčastějších slov v záhlaví navrhů projektů") +
+  scale_size_continuous(range = c(2,12)) +
+  scale_x_log10(labels = scales::percent_format(scale = 1, accuracy = 0.01, decimal.mark = ",",), limits = c(0.035,0.7)) +
+  scale_y_log10(labels = scales::percent_format(scale = 1, accuracy = 0.01, decimal.mark = ",",), limits = c(0.035,0.7)) +
+  geom_abline(color = "red") +
+  theme_classic() +
+    theme(
+          plot.title = element_text("Helvetica", color = "black", 
+                                    hjust = 0.5),
+          axis.text = element_text("Helvetica", color = "black"))
+  )
+
+
+comparison_gg
+
+
+```
+
+
+```{r echo=FALSE}
+ggplotly(comparison_gg, tooltip = "text")
+
+comparison_plotly <- ggplotly(comparison_gg, tooltip = "text")
+
+
+htmlwidgets::saveWidget(comparison_plotly, 
+                        here::here("figures", "MFWcomparison.html"),
+                        selfcontained = TRUE)
+
+unlink(here::here("figures", "MFWcomparison_files"), recursive = TRUE)
+```
+
+
+## Síť
+
+```{r include=FALSE}
+
+## rewrite text source to keywords only
+gacr_text <- gacr %>% filter(str_detect(soutez, "Standa|Junior")) %>%
+select(project = cislo_projektu, keywords = klicova_slova) %>%
+filter(!duplicated(project)) %>%
+mutate(keywords = trimws(tolower(keywords))) %>%
+tidytext::unnest_tokens(word, keywords) %>%
+filter(!word %in% tidystopwords::generate_stoplist(lang_name = "Czech")) %>%
+group_by(project) %>%
+count(word)
+
+
+edge_make <- function(gacr) {
+edge_list <- gacr %>% 
+  filter(str_detect(soutez, "Standa|Junior")) %>% 
+  select(project = cislo_projektu) %>%
+  left_join(gacr_text) %>% 
+  widyr::pairwise_count(project, word, n) %>% 
+  rename(from = item1, to = item2, weight = n) %>% 
+  arrange(desc(weight)) %>% 
+  # clean for parallel edges
+  mutate(temp = ifelse(from > to, paste0(to, from), paste0(from, to))) %>% 
+    group_by(temp) %>% 
+    mutate(weight = sum(weight)) %>% 
+    ungroup() %>% 
+    dplyr::distinct(temp, .keep_all = TRUE) %>% 
+    select(-temp) %>% 
+    filter(!is.na(weight))
+}
+
+node_make <- function(gacr) {
+nodes_list <- gacr %>%
+  filter(str_detect(soutez, "Standa|Junior")) %>%
+  select(status, label = cislo_projektu, title) %>% 
+  filter(!duplicated(label)) %>% 
+    mutate(funding = if_else(status ==  TRUE, "Schválené", "Zamítnuté"), 
+           status = NULL) %>% 
+  inner_join(gacr_text %>% 
+              group_by(project) %>% 
+              mutate(words = paste(word, collapse = "\n")) %>% 
+              select(project, words) %>% 
+               distinct(), by = c("label" = "project"))
+}
+
+gacr_g <- gacr %>% 
+  filter(str_detect(soutez, "Standa|Junior")) %>%
+  mutate(title = case_when(str_detect(komise, "zem") ~ "Vědy zemědělské, biologicko-environmentální", 
+                              str_detect(komise, "spol") ~ "Vědy humanitní, společenské",
+                              str_detect(komise, "lék") ~ "Vědy lékařské, biologické",
+                              str_detect(komise, "přír") ~ "Vědy o neživé přírodě",
+                              str_detect(komise, "tech") ~ "Vědy technické")) %>% 
+#  mutate(title = paste("Síť slov:", title)) %>% 
+  group_by(komise) %>% 
+  nest() %>% 
+  ungroup() %>% 
+  mutate(edges = map(data, edge_make)) %>% 
+  mutate(nodes = map(data, node_make)) %>% 
+  mutate(graph = map2(.x = nodes, .y = edges, ~ tbl_graph(nodes = .x, edges = .y, directed = FALSE))) 
+
+
+
+```
+
+## Word stats
+
+```{r echo=FALSE}
+
+gacr_text %>% group_by(project) %>% mutate(per_project = sum(n)) %>% 
+  ungroup() %>% summarise(mean_words = mean(per_project))
+
+gacr_text %>% left_join(gacr %>% select(cislo_projektu, status), 
+                        by = c("project" = "cislo_projektu")) %>% 
+  group_by(project) %>%
+  mutate(per_project = sum(n)) %>% 
+  group_by(status) %>% 
+  summarise(mean_words = mean(per_project))
+
+gacr_g %>% select(edges) %>% unnest(cols = c(edges)) %>% 
+  ungroup() %>% summarise(mean_shared_words = mean(weight, na.rm = T))
+
+funded_projects <- gacr %>% filter(status == TRUE) %>% pull(cislo_projektu)
+unfunded_projects <- gacr %>% filter(status == FALSE) %>% pull(cislo_projektu)
+
+gacr_g %>% select(edges) %>% unnest(cols = c(edges)) %>% 
+  filter(from %in% funded_projects, to %in% funded_projects) %>% 
+  summarise(mean_shared_words_funded = mean(weight, na.rm = T))
+
+gacr_g %>% select(edges) %>% unnest(cols = c(edges)) %>% 
+  filter(from %in% unfunded_projects, to %in% unfunded_projects) %>% 
+  summarise(mean_shared_words_unfunded = mean(weight, na.rm = T))
+
+gacr_g %>% select(edges) %>% unnest(cols = c(edges)) %>% arrange(desc(weight)) %>% summary()
+
+
+```
+# Net visualize
+
+```{r include=FALSE}
+
+mutate_degree <- function(g) {
+g %>% 
+  activate(nodes) %>% 
+  mutate(degree = centrality_degree())
+}
+
+gacr_g <- gacr_g %>% 
+  mutate(graph = map(graph, mutate_degree))
+
+
+```
+
+```{r include=FALSE}
+
+net_make <- function(gacr_g) {
+vs <- V(gacr_g %>% activate(edges) %>% filter(weight > 4))
+es <- as.data.frame(get.edgelist(gacr_g %>% activate(edges) %>% filter(weight > 4)))
+
+G <- upgrade_graph(gacr_g  %>% activate(edges) %>% filter(weight > 4))
+L <- layout.circle(gacr_g %>% activate(edges) %>% filter(weight > 4))
+
+Nv <- length(vs)
+Ne <- length(es[1]$V1)
+
+Xn <- L[,1]
+Yn <- L[,2]
+
+network <- plot_ly(x = ~Xn, y = ~Yn, mode = "markers", 
+                   text = V(gacr_g)$words,  
+                   color = V(gacr_g)$funding,
+                   size = V(gacr_g)$degree,
+                   hoverinfo = "text")
+
+edge_shapes <- list()
+for(i in 1:Ne) {
+  v0 <- es[i,]$V1
+  v1 <- es[i,]$V2
+
+  edge_shape = list(
+    type = "line",
+    line = list(color = "#030303", width = 0.05),
+    x0 = Xn[v0],
+    y0 = Yn[v0],
+    x1 = Xn[v1],
+    y1 = Yn[v1]
+  )
+
+  edge_shapes[[i]] <- edge_shape
+}
+
+axis <- list(title = "", showgrid = FALSE, showticklabels = FALSE, zeroline = FALSE)
+
+p <- layout(
+  network,
+  title = V(gacr_g)$title %>% unique(),
+  shapes = edge_shapes,
+  xaxis = axis,
+  yaxis = axis
+)
+
+p
+
+}
+```
+
+
+```{r echo=FALSE}
+
+gacr_g <- gacr_g %>% 
+  mutate(plotly_g = map(graph, net_make))
+
+
+
+gacr_g$plotly_g[[1]]
+htmlwidgets::saveWidget(gacr_g$plotly_g[[1]], 
+                        here::here("figures", "agricult.html"),
+                        selfcontained = TRUE)
+
+unlink(here::here("figures", "agricult_files"), recursive = TRUE)
+
+gacr_g$plotly_g[[2]]
+htmlwidgets::saveWidget(gacr_g$plotly_g[[2]], 
+                        here::here("figures", "health.html"),
+                        selfcontained = TRUE)
+ 
+unlink(here::here("figures", "health_files"), recursive = TRUE)
+
+gacr_g$plotly_g[[3]]
+htmlwidgets::saveWidget(gacr_g$plotly_g[[3]], 
+                        here::here("figures", "socsci.html"),
+                        selfcontained = TRUE)
+
+unlink(here::here("figures", "socsci_files"), recursive = TRUE)
+
+gacr_g$plotly_g[[4]]
+htmlwidgets::saveWidget(gacr_g$plotly_g[[4]], 
+                        here::here("figures", "natsci.html"),
+                        selfcontained = TRUE)
+
+unlink(here::here("figures", "natsci_files"), recursive = TRUE)
+
+gacr_g$plotly_g[[5]]
+htmlwidgets::saveWidget(gacr_g$plotly_g[[5]], 
+                        here::here("figures", "techsci.html"),
+                        selfcontained = TRUE, 
+                        knitrOptions = list(width = 1200, height = 700))
+
+unlink(here::here("figures", "techsci_files"), recursive = TRUE)
+
+```
+
